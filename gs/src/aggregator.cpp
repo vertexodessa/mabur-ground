@@ -304,7 +304,15 @@ void Aggregator::on_rx_body(const mabur::node::RxBody& m) {
   // otherwise it stays a crc_fail and goes nowhere. In a fade with no
   // FCS-good video body for that long, salvage is the only source left,
   // so every FCS-bad body is routed by its peeked id as before.
-  if (!m.crc_ok && heard_within(any_clean_us_, m.mono_us)) {
+  // A body naming the probe stream is not gated. The probe flies a rung
+  // above the link, so at the edge most probe PPDUs fail FCS and for long
+  // stretches none is clean: the rule would drop them all, ProbeTrack would
+  // book each as a full bpb loss and probe_u would saturate, the Lossy bias
+  // docs/link-adaptation.md (mabur) describes for a crc_ok gate on the
+  // probe sink. A video body flipped into the probe id only reaches
+  // ProbeTrack, which drops what does not parse as a probe.
+  if (!m.crc_ok && stream_id != mabur::kProbeStreamId &&
+      heard_within(any_clean_us_, m.mono_us)) {
     const uint64_t seen = stream_id >= 0 ? sid_clean_us_[static_cast<size_t>(stream_id)] : 0;
     if (!heard_within(seen, m.mono_us)) return;
   }
@@ -314,8 +322,8 @@ void Aggregator::on_rx_body(const mabur::node::RxBody& m) {
   }
   if (stream_id == mabur::kProbeStreamId) {
     // Probe stream: scored by ProbeTrack, never decoded.
-    // FCS-failed bodies still reach the sink (behind the same clean-stream
-    // gate as video) — parse_probe_body salvages
+    // FCS-failed bodies reach the sink whatever the clean-stream rule says
+    // (above) — parse_probe_body salvages
     // CRC-clean sub-blocks exactly as the video decoder does, so probe loss
     // stays comparable to video loss.
     if (probe_sink_) probe_sink_(m.card_id, m);

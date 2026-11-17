@@ -246,9 +246,41 @@ TEST(crc_failed_probe_body_is_delivered_for_salvage) {
 }
 
 // The SBI stream byte has no CRC: an FCS-bad body is routed only to a
-// stream some card heard FCS-good within the last 500 ms, unless no SBI body
-// at all was FCS-good that long (a fade: salvage is all there is).
+// stream some card heard FCS-good within the last 500 ms, unless no video
+// body was FCS-good that long (a fade: salvage is all there is).
 TEST(crc_failed_body_needs_its_stream_heard_clean) {
+  Aggregator agg(vec_layers(), 512, 2);
+  std::vector<uint8_t> base, enh;
+  for (auto& b : encode_fixture_bodies()) {
+    const int sid = mabur::sbi_peek_stream_id(b.data(), b.size());
+    if (sid == 0 && base.empty()) base = b;
+    if (sid == 1 && enh.empty()) enh = b;
+  }
+  REQUIRE(!base.empty());
+  REQUIRE(!enh.empty());
+  int enh_frags = 0;
+  agg.set_frag_sink([&](const mabur::DecodedFrag& f) { enh_frags += f.stream_id == 1; });
+  agg.on_rx_body(msg(1, 11, true, base));                     // base alive, enh not
+  agg.on_rx_body(msg(0, 12, false, enh));
+  CHECK(enh_frags == 0);
+  CHECK(agg.card(0).video_bodies == 0);
+  agg.on_rx_body(msg(1, 13, true, enh));                      // enh clean on card 1
+  const int clean = enh_frags;
+  agg.on_rx_body(msg(0, 14, false, enh));                     // routed on card 0 too
+  CHECK(agg.card(0).video_bodies == 1);
+  CHECK(enh_frags >= clean);
+  agg.on_rx_body(msg(0, 600, false, enh));                    // 586 ms of fade
+  CHECK(agg.card(0).video_bodies == 2);
+  agg.on_rx_body(msg(1, 700, true, base));                    // base back, enh stale
+  agg.on_rx_body(msg(0, 701, false, enh));
+  CHECK(agg.card(0).video_bodies == 2);
+  CHECK(agg.card(0).crc_fail == 4);
+}
+
+// The probe flies a rung above the link and is often never FCS-good for
+// long stretches: its FCS-bad bodies reach ProbeTrack whatever the
+// clean-stream rule says, or every one of them would be booked lost.
+TEST(crc_failed_probe_body_is_not_gated_by_the_clean_stream_rule) {
   Aggregator agg(vec_layers(), 512, 2);
   std::vector<uint8_t> video;
   for (auto& b : encode_fixture_bodies())
@@ -257,20 +289,13 @@ TEST(crc_failed_body_needs_its_stream_heard_clean) {
   int probes = 0;
   agg.set_frag_sink([](const mabur::DecodedFrag&) {});
   agg.set_probe_sink([&](uint8_t, const mabur::node::RxBody&) { ++probes; });
-  agg.on_rx_body(msg(0, 10, false, probe_body_fixture(1)));   // nothing clean yet
-  CHECK(probes == 1);
-  agg.on_rx_body(msg(1, 11, true, video));                    // video alive, probe not
-  agg.on_rx_body(msg(0, 12, false, probe_body_fixture(2)));
-  CHECK(probes == 1);
-  agg.on_rx_body(msg(1, 13, true, probe_body_fixture(3)));    // probe clean on card 1
-  agg.on_rx_body(msg(0, 14, false, probe_body_fixture(4)));   // routed on card 0 too
-  CHECK(probes == 3);
-  agg.on_rx_body(msg(0, 600, false, probe_body_fixture(5)));  // 586 ms of fade
-  CHECK(probes == 4);
-  agg.on_rx_body(msg(1, 700, true, video));                   // video back, probe stale
-  agg.on_rx_body(msg(0, 701, false, probe_body_fixture(6)));
-  CHECK(probes == 4);
-  CHECK(agg.card(0).crc_fail == 5);
+  agg.on_rx_body(msg(1, 11, true, video));                    // video alive, probe never clean
+  for (uint16_t t = 12; t < 900; t += 40) {
+    agg.on_rx_body(msg(0, t, false, probe_body_fixture(t)));
+    agg.on_rx_body(msg(1, t + 1, true, video));
+  }
+  CHECK(probes == 23);
+  CHECK(agg.card(0).crc_fail == 23);
 }
 
 // MSP flies at the robust control modulation and stays FCS-good through a

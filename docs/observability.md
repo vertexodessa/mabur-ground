@@ -120,7 +120,10 @@ been seen: the commanded `ov`, FEC `recovered`/`abandoned` (and their
   if some card heard that stream FCS-good within 500 ms, and otherwise goes
   nowhere, unless no video body was FCS-good for 500 ms (a fade, where
   salvage is all there is; MSP at the robust control rate does not count),
-  when every corrupt body is routed as named. `corrupt` =
+  when every corrupt body is routed as named. A body naming the probe stream
+  is never gated: the probe flies a rung above the link and can go 500 ms
+  without one FCS-good body while video is clean, and dropping its corrupt
+  bodies would book each as a full `bpb` loss in `probe_u`. `corrupt` =
   FCS-corrupt bodies delivered, `salvaged` = CRC16-clean sub-blocks taken
   out of them, `sub_fail` = sub-blocks that failed (from any body),
   `salvage_only` = seqs whose ONLY arrival inside the arrival guard was a
