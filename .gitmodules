@@ -1,3 +1,4 @@
 [submodule "third_party/mabur"]
 	path = third_party/mabur
-	url = https://github.com/gilankpam/mabur.git
+	url = https://github.com/vertexodessa/mabur.git
+	branch = palianytsia/base-v2
